@@ -1,0 +1,168 @@
+version: '3'
+
+# Security scanning tasks
+#
+# Tools used (install as needed):
+#   trivy     — vulnerability scanner for images, IaC, filesystems
+#               https://aquasecurity.github.io/trivy/
+#               brew install aquasecurity/trivy/trivy
+#
+#   gitleaks  — detect secrets committed to git
+#               https://github.com/gitleaks/gitleaks
+#               brew install gitleaks
+#
+#   checkov   — static analysis for Terraform/Helm/K8s manifests
+#               https://github.com/bridgecrewio/checkov
+#               pip install checkov
+#
+# Output is written to $OUTPUT_DIR (default: .diagnostics).
+
+vars:
+  SEVERITY: HIGH,CRITICAL
+
+tasks:
+
+  # ── Image Scanning ───────────────────────────────────────────────────────────
+
+  scan:image:
+    desc: "Scan a container image for vulnerabilities. Usage: task security:scan:image IMAGE=my-app:latest"
+    summary: |
+      Scans a Docker image with trivy.
+        task security:scan:image IMAGE=nginx:latest
+        task security:scan:image IMAGE=my-app:1.0.0 SEVERITY=MEDIUM,HIGH,CRITICAL
+    vars:
+      IMAGE:    '{{.IMAGE | default ""}}'
+      SEVERITY: '{{.SEVERITY | default "HIGH,CRITICAL"}}'
+    cmds:
+      - |
+        : "${IMAGE:?Pass IMAGE=<image:tag>}"
+        mkdir -p "${OUTPUT_DIR:-.diagnostics}"
+        echo "Scanning image: {{.IMAGE}} (severity: {{.SEVERITY}})"
+        trivy image \
+          --severity {{.SEVERITY}} \
+          --exit-code 1 \
+          --format table \
+          "{{.IMAGE}}" \
+          | tee "${OUTPUT_DIR:-.diagnostics}/scan-image-$(echo '{{.IMAGE}}' | tr '/:' '-').txt"
+    ignore_error: true
+
+  scan:image:json:
+    desc: "Scan a container image and output JSON report. Usage: task security:scan:image:json IMAGE=my-app:latest"
+    vars:
+      IMAGE: '{{.IMAGE | default ""}}'
+    cmds:
+      - |
+        : "${IMAGE:?Pass IMAGE=<image:tag>}"
+        mkdir -p "${OUTPUT_DIR:-.diagnostics}"
+        OUT="${OUTPUT_DIR:-.diagnostics}/scan-image-$(echo '{{.IMAGE}}' | tr '/:' '-').json"
+        trivy image --format json "{{.IMAGE}}" > "$OUT"
+        echo "Report written to $OUT"
+
+  # ── Filesystem & Code Scanning ───────────────────────────────────────────────
+
+  scan:fs:
+    desc: "Scan the local filesystem for vulnerabilities (dependencies, packages)"
+    summary: |
+      Scans the current directory for known vulnerabilities in package manifests
+      (package.json, go.sum, requirements.txt, etc.).
+    vars:
+      PATH_ARG: '{{.PATH_ARG | default "."}}'
+      SEVERITY: '{{.SEVERITY | default "HIGH,CRITICAL"}}'
+    cmds:
+      - |
+        mkdir -p "${OUTPUT_DIR:-.diagnostics}"
+        echo "Scanning filesystem: {{.PATH_ARG}} (severity: {{.SEVERITY}})"
+        trivy fs \
+          --severity {{.SEVERITY}} \
+          --exit-code 1 \
+          {{.PATH_ARG}} \
+          | tee "${OUTPUT_DIR:-.diagnostics}/scan-fs.txt"
+    ignore_error: true
+
+  scan:config:
+    desc: "Scan IaC configs (Terraform, Helm, K8s manifests) for misconfigurations"
+    summary: |
+      Runs trivy config scan on the current directory.
+      Detects misconfigurations in Terraform, Helm charts, and Kubernetes manifests.
+    vars:
+      PATH_ARG: '{{.PATH_ARG | default "."}}'
+    cmds:
+      - |
+        mkdir -p "${OUTPUT_DIR:-.diagnostics}"
+        echo "Scanning IaC configs in: {{.PATH_ARG}}"
+        trivy config \
+          --exit-code 1 \
+          {{.PATH_ARG}} \
+          | tee "${OUTPUT_DIR:-.diagnostics}/scan-config.txt"
+    ignore_error: true
+
+  scan:repo:
+    desc: "Full repo scan: filesystem + config (combined)"
+    cmds:
+      - task: scan:fs
+      - task: scan:config
+      - task: secrets
+
+  # ── Secret Detection ─────────────────────────────────────────────────────────
+
+  secrets:
+    desc: "Detect secrets in git history and working tree (uses gitleaks)"
+    summary: |
+      Scans git history and staged files for accidentally committed secrets
+      (API keys, tokens, passwords, etc.).
+      Requires gitleaks: brew install gitleaks
+    cmds:
+      - |
+        mkdir -p "${OUTPUT_DIR:-.diagnostics}"
+        echo "Scanning for secrets with gitleaks..."
+        gitleaks detect \
+          --source . \
+          --report-format json \
+          --report-path "${OUTPUT_DIR:-.diagnostics}/secrets-report.json" \
+          --verbose \
+          || (echo "" && echo "⚠ Potential secrets found — see ${OUTPUT_DIR:-.diagnostics}/secrets-report.json")
+
+  secrets:staged:
+    desc: "Check only staged files for secrets before commit"
+    cmds:
+      - gitleaks protect --staged --verbose
+
+  # ── Terraform / Checkov ──────────────────────────────────────────────────────
+
+  checkov:
+    desc: "Run checkov static analysis on Terraform configs"
+    summary: |
+      Requires checkov: pip install checkov
+      Scans the terraform/ directory by default.
+        task security:checkov
+        task security:checkov DIR=./infrastructure
+    vars:
+      DIR: '{{.DIR | default "terraform"}}'
+    cmds:
+      - |
+        mkdir -p "${OUTPUT_DIR:-.diagnostics}"
+        echo "Running checkov on {{.DIR}}..."
+        checkov -d {{.DIR}} \
+          --output cli \
+          --output-file-path "${OUTPUT_DIR:-.diagnostics}" \
+          --soft-fail
+
+  # ── AWS Security ─────────────────────────────────────────────────────────────
+
+  aws:public-resources:
+    desc: "List publicly accessible AWS resources (S3 buckets, security groups)"
+    cmds:
+      - |
+        echo "=== Public S3 buckets ==="
+        aws s3api list-buckets --query 'Buckets[].Name' --output text \
+          | tr '\t' '\n' \
+          | xargs -I{} sh -c '
+              acl=$(aws s3api get-bucket-acl --bucket {} --query "Grants[?Grantee.URI==\`http://acs.amazonaws.com/groups/global/AllUsers\`]" --output text 2>/dev/null)
+              [ -n "$acl" ] && echo "PUBLIC: {}"
+            ' 2>/dev/null || echo "(none or no access)"
+        echo ""
+        echo "=== Security groups with 0.0.0.0/0 inbound ==="
+        aws ec2 describe-security-groups \
+          --query "SecurityGroups[?IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0']]].{ID:GroupId,Name:GroupName}" \
+          --output table \
+          --region "${AWS_REGION:-eu-central-1}" 2>/dev/null || echo "(no access)"

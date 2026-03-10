@@ -1,0 +1,28 @@
+version: '3'
+
+tasks:
+
+  init:
+    dir: terraform
+    cmds:
+      - terraform init --upgrade
+
+  plan:
+    dir: terraform
+    cmds:
+      - terraform plan
+
+  apply:
+    dir: terraform
+    cmds:
+      - terraform apply
+
+  fmt:
+    dir: terraform
+    cmds:
+      - terraform fmt -recursive
+
+  validate:
+    dir: terraform
+    cmds:
+      - terraform validate

@@ -1,0 +1,180 @@
+version: '3'
+
+# Git workflow tasks
+#
+# These tasks wrap common git operations with sane defaults and
+# project-specific conventions. They are meant to supplement the
+# git CLI, not replace it.
+
+tasks:
+
+  # ── Status & Info ────────────────────────────────────────────────────────────
+
+  status:
+    desc: "Short git status"
+    cmds:
+      - git status -sb
+
+  log:
+    desc: "Pretty one-line git log (last 20 commits)"
+    summary: |
+      Shows a compact, colorized git log.
+      Usage: task git:log [N=50]
+    vars:
+      N: '{{.N | default "20"}}'
+    cmds:
+      - |
+        git log --oneline --graph --decorate --color -{{.N}}
+
+  log:full:
+    desc: "Full git log with author and date (last 10 commits)"
+    vars:
+      N: '{{.N | default "10"}}'
+    cmds:
+      - |
+        git log --graph --decorate --color \
+          --format="%C(yellow)%h%Creset %C(blue)%an%Creset %C(green)%ar%Creset %s" \
+          -{{.N}}
+
+  diff:
+    desc: "Show unstaged changes (word-level diff)"
+    cmds:
+      - git diff --word-diff
+
+  diff:staged:
+    desc: "Show staged changes ready for commit"
+    cmds:
+      - git diff --staged --word-diff
+
+  # ── Branches ─────────────────────────────────────────────────────────────────
+
+  branches:
+    desc: "List local branches sorted by most recent commit"
+    cmds:
+      - |
+        git for-each-ref --sort=-committerdate refs/heads/ \
+          --format='%(color:yellow)%(refname:short)%(color:reset)  %(committerdate:relative)  %(subject)'
+
+  branches:remote:
+    desc: "List remote branches sorted by most recent commit"
+    cmds:
+      - |
+        git fetch --prune --quiet
+        git for-each-ref --sort=-committerdate refs/remotes/ \
+          --format='%(color:yellow)%(refname:short)%(color:reset)  %(committerdate:relative)  %(subject)'
+
+  branch:new:
+    desc: "Create and switch to a new branch. Usage: task git:branch:new NAME=feature/my-feature"
+    vars:
+      NAME: '{{.NAME | default ""}}'
+    cmds:
+      - |
+        : "${NAME:?Pass NAME=<branch-name>}"
+        git checkout -b "{{.NAME}}"
+
+  branch:delete:
+    desc: "Delete a local branch. Usage: task git:branch:delete NAME=feature/my-feature"
+    vars:
+      NAME: '{{.NAME | default ""}}'
+    cmds:
+      - |
+        : "${NAME:?Pass NAME=<branch-name>}"
+        git branch -d "{{.NAME}}"
+
+  # ── Sync ─────────────────────────────────────────────────────────────────────
+
+  sync:
+    desc: "Fetch all remotes and pull current branch (rebase)"
+    cmds:
+      - git fetch --all --prune
+      - git pull --rebase
+
+  sync:main:
+    desc: "Switch to main (or master), pull latest, then return to previous branch"
+    cmds:
+      - |
+        CURRENT=$(git rev-parse --abbrev-ref HEAD)
+        MAIN=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+        git checkout "$MAIN"
+        git pull --rebase
+        git checkout "$CURRENT"
+        echo "Back on $CURRENT (synced $MAIN)"
+
+  # ── Cleanup ──────────────────────────────────────────────────────────────────
+
+  clean:
+    desc: "Remove untracked files and directories (dry-run by default)"
+    summary: |
+      Shows what would be removed. To actually delete, pass DRY=false:
+        task git:clean DRY=false
+    vars:
+      DRY: '{{.DRY | default "true"}}'
+    cmds:
+      - |
+        if [ "{{.DRY}}" = "true" ]; then
+          echo "[dry-run] Files that would be removed:"
+          git clean -ndx
+        else
+          git clean -fdx
+        fi
+
+  prune:
+    desc: "Delete local branches already merged into main/master"
+    cmds:
+      - |
+        MAIN=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+        git fetch --prune
+        git branch --merged "$MAIN" \
+          | grep -v "^\*\|$MAIN\|main\|master\|develop" \
+          | xargs -r git branch -d
+        echo "Done. Remaining branches:"
+        git branch
+
+  # ── Tags ─────────────────────────────────────────────────────────────────────
+
+  tags:
+    desc: "List all tags sorted by version"
+    cmds:
+      - git tag --sort=-v:refname | head -20
+
+  tag:create:
+    desc: "Create an annotated tag. Usage: task git:tag:create TAG=v1.2.3 MSG='Release notes'"
+    vars:
+      TAG: '{{.TAG | default ""}}'
+      MSG: '{{.MSG | default ""}}'
+    cmds:
+      - |
+        : "${TAG:?Pass TAG=<tag-name>}"
+        : "${MSG:?Pass MSG=<tag-message>}"
+        git tag -a "{{.TAG}}" -m "{{.MSG}}"
+        echo "Tag {{.TAG}} created. Push with: git push origin {{.TAG}}"
+
+  tag:delete:
+    desc: "Delete a local and remote tag. Usage: task git:tag:delete TAG=v1.2.3"
+    vars:
+      TAG: '{{.TAG | default ""}}'
+    prompt: "Delete tag {{.TAG}} locally and from origin?"
+    cmds:
+      - |
+        : "${TAG:?Pass TAG=<tag-name>}"
+        git tag -d "{{.TAG}}"
+        git push origin ":refs/tags/{{.TAG}}"
+
+  # ── Stash ────────────────────────────────────────────────────────────────────
+
+  stash:
+    desc: "Stash current changes with a message. Usage: task git:stash MSG='WIP: my changes'"
+    vars:
+      MSG: '{{.MSG | default "WIP"}}'
+    cmds:
+      - git stash push -m "{{.MSG}}"
+
+  stash:list:
+    desc: "List all stashes"
+    cmds:
+      - git stash list
+
+  stash:pop:
+    desc: "Apply and remove the latest stash"
+    cmds:
+      - git stash pop

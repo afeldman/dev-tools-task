@@ -1,0 +1,194 @@
+version: '3'
+
+# Kubernetes tasks
+#
+# Required env vars (set in .taskfile.env):
+#   NAMESPACE     — default Kubernetes namespace to operate in
+#
+# Optional env vars:
+#   KUBE_CONTEXT  — kubectl context to use (e.g. lynqtech-dev); if unset,
+#                   the current active context is used
+#   KUBECONFIG    — path to kubeconfig (defaults to ~/.kube/config)
+#
+# Context switching supports both AKS (az aks get-credentials) and
+# EKS (aws eks update-kubeconfig) clusters. Use kube:login to pick a context.
+
+vars:
+  # Builds "--context <name>" when KUBE_CONTEXT is set, empty string otherwise.
+  # Append {{.CTX}} to every kubectl call to respect the configured context.
+  CTX:
+    sh: echo "${KUBE_CONTEXT:+--context $KUBE_CONTEXT}"
+
+tasks:
+
+  # ── Context & Auth ──────────────────────────────────────────────────────────
+
+  login:
+    desc: "Show available contexts and switch to one interactively"
+    cmds:
+      - |
+        echo "Available contexts:"
+        kubectl config get-contexts
+        echo ""
+        printf "Enter context name: "
+        read -r CTX
+        kubectl config use-context "$CTX"
+        echo "Active context: $(kubectl config current-context)"
+
+  context:
+    desc: "Show current Kubernetes context and namespace"
+    cmds:
+      - |
+        echo "Context:   $(kubectl config current-context)"
+        echo "Namespace: ${NAMESPACE:-default}"
+        echo "Server:    $(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+        [ -n "$KUBE_CONTEXT" ] && echo "Pinned to: $KUBE_CONTEXT (via .taskfile.env)" || true
+
+  login:aks:
+    desc: "Login to an AKS cluster (requires az CLI). Usage: task kube:login:aks CLUSTER=my-cluster RESOURCE_GROUP=my-rg"
+    summary: |
+      Fetches credentials for an Azure AKS cluster and sets it as active context.
+      Usage: task kube:login:aks CLUSTER=my-cluster RESOURCE_GROUP=my-rg
+    vars:
+      CLUSTER: '{{.CLUSTER | default ""}}'
+      RESOURCE_GROUP: '{{.RESOURCE_GROUP | default ""}}'
+    cmds:
+      - |
+        : "${CLUSTER:?Pass CLUSTER=<cluster-name>}"
+        : "${RESOURCE_GROUP:?Pass RESOURCE_GROUP=<resource-group>}"
+        az aks get-credentials \
+          --name "{{.CLUSTER}}" \
+          --resource-group "{{.RESOURCE_GROUP}}" \
+          --overwrite-existing
+        kubectl config use-context "{{.CLUSTER}}"
+
+  login:eks:
+    desc: "Login to an EKS cluster (uses $AWS_PROFILE_DEV and $AWS_REGION). Usage: task kube:login:eks CLUSTER=my-cluster"
+    summary: |
+      Fetches credentials for an AWS EKS cluster via aws eks update-kubeconfig.
+      Usage: task kube:login:eks CLUSTER=my-cluster
+    vars:
+      CLUSTER: '{{.CLUSTER | default ""}}'
+    cmds:
+      - |
+        : "${CLUSTER:?Pass CLUSTER=<cluster-name>}"
+        : "${AWS_REGION:?AWS_REGION is not set}"
+        aws eks update-kubeconfig \
+          --name "{{.CLUSTER}}" \
+          --region "$AWS_REGION" \
+          ${AWS_PROFILE_DEV:+--profile "$AWS_PROFILE_DEV"}
+
+  # ── Workloads ───────────────────────────────────────────────────────────────
+
+  pods:
+    desc: "List all pods in $NAMESPACE"
+    cmds:
+      - kubectl get pods {{.CTX}} -n "${NAMESPACE:?NAMESPACE is not set}" -o wide
+
+  deployments:
+    desc: "List all deployments in $NAMESPACE"
+    cmds:
+      - kubectl get deployments {{.CTX}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  services:
+    desc: "List all services in $NAMESPACE"
+    cmds:
+      - kubectl get services {{.CTX}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  restart:
+    desc: "Rolling restart a deployment. Usage: task kube:restart DEPLOY=my-app"
+    vars:
+      DEPLOY: '{{.DEPLOY | default ""}}'
+    cmds:
+      - |
+        : "${DEPLOY:?Pass DEPLOY=<deployment-name>}"
+        kubectl rollout restart {{.CTX}} deployment/{{.DEPLOY}} -n "${NAMESPACE:?NAMESPACE is not set}"
+        kubectl rollout status  {{.CTX}} deployment/{{.DEPLOY}} -n "$NAMESPACE"
+
+  # ── Logs & Debug ────────────────────────────────────────────────────────────
+
+  logs:
+    desc: "Follow logs of a pod or deployment. Usage: task kube:logs POD=my-pod [CONTAINER=my-container]"
+    summary: |
+      Streams logs from a pod. Accepts a pod name or a label selector.
+        task kube:logs POD=my-pod
+        task kube:logs POD=deploy/my-app
+        task kube:logs POD=my-pod CONTAINER=sidecar
+    vars:
+      POD: '{{.POD | default ""}}'
+      CONTAINER: '{{.CONTAINER | default ""}}'
+    cmds:
+      - |
+        : "${POD:?Pass POD=<pod-name|deploy/name>}"
+        kubectl logs {{.CTX}} -f "{{.POD}}" \
+          -n "${NAMESPACE:?NAMESPACE is not set}" \
+          ${CONTAINER:+--container "{{.CONTAINER}}"} \
+          --tail=100
+
+  exec:
+    desc: "Open a shell in a pod. Usage: task kube:exec POD=my-pod [CONTAINER=my-container]"
+    vars:
+      POD: '{{.POD | default ""}}'
+      CONTAINER: '{{.CONTAINER | default ""}}'
+      SHELL: '{{.SHELL | default "/bin/sh"}}'
+    cmds:
+      - |
+        : "${POD:?Pass POD=<pod-name>}"
+        kubectl exec {{.CTX}} -it "{{.POD}}" \
+          -n "${NAMESPACE:?NAMESPACE is not set}" \
+          ${CONTAINER:+--container "{{.CONTAINER}}"} \
+          -- {{.SHELL}}
+
+  port-forward:
+    desc: "Port-forward a service or pod. Usage: task kube:port-forward SVC=my-svc PORTS=8080:80"
+    vars:
+      SVC: '{{.SVC | default ""}}'
+      PORTS: '{{.PORTS | default ""}}'
+    cmds:
+      - |
+        : "${SVC:?Pass SVC=<service-name>}"
+        : "${PORTS:?Pass PORTS=<local:remote>}"
+        echo "Forwarding {{.PORTS}} → {{.SVC}} (ctrl+c to stop)"
+        kubectl port-forward {{.CTX}} svc/{{.SVC}} {{.PORTS}} \
+          -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  events:
+    desc: "Show recent events in $NAMESPACE, sorted by timestamp"
+    cmds:
+      - kubectl get events {{.CTX}} -n "${NAMESPACE:?NAMESPACE is not set}" --sort-by='.lastTimestamp'
+
+  describe:
+    desc: "Describe a resource. Usage: task kube:describe TYPE=pod NAME=my-pod"
+    vars:
+      TYPE: '{{.TYPE | default "pod"}}'
+      NAME: '{{.NAME | default ""}}'
+    cmds:
+      - |
+        : "${NAME:?Pass NAME=<resource-name>}"
+        kubectl describe {{.CTX}} {{.TYPE}} {{.NAME}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  # ── Resource Management ─────────────────────────────────────────────────────
+
+  top:
+    desc: "Show CPU/memory usage for pods in $NAMESPACE"
+    cmds:
+      - kubectl top pods {{.CTX}} -n "${NAMESPACE:?NAMESPACE is not set}" --sort-by=cpu
+
+  resources:
+    desc: "Show resource requests and limits for all pods in $NAMESPACE"
+    cmds:
+      - |
+        kubectl get pods {{.CTX}} -n "${NAMESPACE:?NAMESPACE is not set}" -o json \
+          | jq -r '
+            .items[] |
+            .metadata.name as $pod |
+            .spec.containers[] |
+            [$pod, .name,
+             (.resources.requests.cpu // "-"),
+             (.resources.requests.memory // "-"),
+             (.resources.limits.cpu // "-"),
+             (.resources.limits.memory // "-")] |
+            @tsv' \
+          | column -t -s $'\t' \
+          | (echo "POD CONTAINER CPU_REQ MEM_REQ CPU_LIM MEM_LIM" && cat) \
+          | column -t

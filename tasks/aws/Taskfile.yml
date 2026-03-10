@@ -1,0 +1,27 @@
+version: '3'
+
+# AWS_PROFILE_DEV and AWS_PROFILE_PLAY are loaded from .taskfile.env via the root Taskfile.
+
+tasks:
+
+  login:dev:
+    desc: "AWS SSO login with dev profile ($AWS_PROFILE_DEV)"
+    cmds:
+      - |
+        : "${AWS_PROFILE_DEV:?AWS_PROFILE_DEV is not set — run scripts/install.sh or edit .taskfile.env}"
+        export AWS_PROFILE="$AWS_PROFILE_DEV"
+        aws sso login
+        aws configure list
+
+  login:play:
+    desc: "AWS SSO login with playground profile ($AWS_PROFILE_PLAY)"
+    cmds:
+      - |
+        : "${AWS_PROFILE_PLAY:?AWS_PROFILE_PLAY is not set — run scripts/install.sh or edit .taskfile.env}"
+        export AWS_PROFILE="$AWS_PROFILE_PLAY"
+        aws sso login
+
+  whoami:
+    desc: Show current AWS caller identity
+    cmds:
+      - aws sts get-caller-identity

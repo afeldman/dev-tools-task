@@ -1,0 +1,156 @@
+version: '3'
+
+# Helm tasks
+#
+# Required env vars (set in .taskfile.env):
+#   NAMESPACE   — Kubernetes namespace to operate in
+#
+# All tasks accept an optional RELEASE var. If omitted, they operate on
+# the namespace level (e.g. helm list) or require it explicitly.
+#
+# Prerequisites: helm (>= 3), kubectl configured with the right context.
+# Optional plugin: helm-diff (https://github.com/databus23/helm-diff)
+#   Install: helm plugin install https://github.com/databus23/helm-diff
+
+tasks:
+
+  # ── Overview ─────────────────────────────────────────────────────────────────
+
+  list:
+    desc: "List all Helm releases in $NAMESPACE"
+    cmds:
+      - helm list -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  list:all:
+    desc: "List all Helm releases across all namespaces"
+    cmds:
+      - helm list --all-namespaces
+
+  status:
+    desc: "Show status of a release. Usage: task helm:status RELEASE=my-app"
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        helm status {{.RELEASE}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  history:
+    desc: "Show revision history of a release. Usage: task helm:history RELEASE=my-app"
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        helm history {{.RELEASE}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  values:
+    desc: "Show computed values for a release. Usage: task helm:values RELEASE=my-app"
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        helm get values {{.RELEASE}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  # ── Diff & Template ──────────────────────────────────────────────────────────
+
+  diff:
+    desc: "Diff a pending upgrade against the live release (requires helm-diff plugin)"
+    summary: |
+      Shows what would change if you ran helm upgrade.
+      Usage: task helm:diff RELEASE=my-app CHART=./charts/my-app [VALUES=values.yaml]
+      Requires: helm plugin install https://github.com/databus23/helm-diff
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+      CHART:   '{{.CHART | default ""}}'
+      VALUES:  '{{.VALUES | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        : "${CHART:?Pass CHART=<chart-path-or-name>}"
+        helm diff upgrade {{.RELEASE}} {{.CHART}} \
+          -n "${NAMESPACE:?NAMESPACE is not set}" \
+          ${VALUES:+-f "{{.VALUES}}"} \
+          --allow-unreleased
+
+  template:
+    desc: "Render chart templates locally. Usage: task helm:template RELEASE=my-app CHART=./charts/my-app [VALUES=values.yaml]"
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+      CHART:   '{{.CHART | default ""}}'
+      VALUES:  '{{.VALUES | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        : "${CHART:?Pass CHART=<chart-path-or-name>}"
+        helm template {{.RELEASE}} {{.CHART}} \
+          -n "${NAMESPACE:?NAMESPACE is not set}" \
+          ${VALUES:+-f "{{.VALUES}}"}
+
+  lint:
+    desc: "Lint a Helm chart. Usage: task helm:lint CHART=./charts/my-app [VALUES=values.yaml]"
+    vars:
+      CHART:  '{{.CHART | default ""}}'
+      VALUES: '{{.VALUES | default ""}}'
+    cmds:
+      - |
+        : "${CHART:?Pass CHART=<chart-path>}"
+        helm lint {{.CHART}} ${VALUES:+-f "{{.VALUES}}"}
+
+  # ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+  upgrade:
+    desc: "Install or upgrade a release. Usage: task helm:upgrade RELEASE=my-app CHART=./charts/my-app [VALUES=values.yaml]"
+    summary: |
+      Runs helm upgrade --install (creates if not exists).
+        task helm:upgrade RELEASE=my-app CHART=./charts/my-app
+        task helm:upgrade RELEASE=my-app CHART=./charts/my-app VALUES=values-prod.yaml
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+      CHART:   '{{.CHART | default ""}}'
+      VALUES:  '{{.VALUES | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        : "${CHART:?Pass CHART=<chart-path-or-name>}"
+        helm upgrade --install {{.RELEASE}} {{.CHART}} \
+          -n "${NAMESPACE:?NAMESPACE is not set}" \
+          --create-namespace \
+          ${VALUES:+-f "{{.VALUES}}"} \
+          --wait \
+          --timeout 5m
+
+  rollback:
+    desc: "Rollback a release to a previous revision. Usage: task helm:rollback RELEASE=my-app [REVISION=2]"
+    vars:
+      RELEASE:  '{{.RELEASE | default ""}}'
+      REVISION: '{{.REVISION | default ""}}'
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        helm rollback {{.RELEASE}} {{.REVISION}} \
+          -n "${NAMESPACE:?NAMESPACE is not set}" \
+          --wait
+
+  uninstall:
+    desc: "Uninstall a release. Usage: task helm:uninstall RELEASE=my-app"
+    vars:
+      RELEASE: '{{.RELEASE | default ""}}'
+    prompt: "Uninstall release {{.RELEASE}} from namespace $NAMESPACE? This cannot be undone."
+    cmds:
+      - |
+        : "${RELEASE:?Pass RELEASE=<release-name>}"
+        helm uninstall {{.RELEASE}} -n "${NAMESPACE:?NAMESPACE is not set}"
+
+  # ── Repository ───────────────────────────────────────────────────────────────
+
+  repo:update:
+    desc: "Update all Helm repository indexes"
+    cmds:
+      - helm repo update
+
+  repo:list:
+    desc: "List configured Helm repositories"
+    cmds:
+      - helm repo list

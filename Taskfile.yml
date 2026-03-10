@@ -1,0 +1,63 @@
+version: '3'
+
+# Project-specific values are loaded from .taskfile.env (created by scripts/install.sh).
+# Copy .taskfile.env.example to .taskfile.env and adjust to your project.
+dotenv: ['.taskfile.env']
+
+vars:
+  NAMESPACE:
+    sh: echo "${NAMESPACE:-my-project}"
+  AWS_REGION:
+    sh: echo "${AWS_REGION:-eu-central-1}"
+  OUTPUT_DIR: .diagnostics
+
+includes:
+
+  aws:
+    taskfile: ./tasks/aws/Taskfile.yml
+    optional: true
+    dir: .
+
+  kube:
+    taskfile: ./tasks/kube/Taskfile.yml
+    optional: true
+    dir: .
+
+  terraform:
+    taskfile: ./tasks/terraform/Taskfile.yml
+    optional: true
+    dir: .
+
+  helm:
+    taskfile: ./tasks/helm/Taskfile.yml
+    optional: true
+    dir: .
+
+  security:
+    taskfile: ./tasks/security/Taskfile.yml
+    optional: true
+    dir: .
+
+  git:
+    taskfile: ./tasks/git/Taskfile.yml
+    optional: true
+    dir: .
+
+  diagnostics:
+    taskfile: ./tasks/diagnostics/Taskfile.yml
+    optional: true
+    dir: .
+
+tasks:
+
+  default:
+    cmds:
+      - task --list-all
+    silent: true
+
+  setup:
+    desc: "Login to AWS (dev), Kubernetes, and initialize Terraform"
+    cmds:
+      - task: aws:login:dev
+      - task: kube:login
+      - task: terraform:init

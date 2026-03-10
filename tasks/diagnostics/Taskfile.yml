@@ -1,0 +1,176 @@
+version: '3'
+
+# Diagnostics tasks
+#
+# Collects runtime information for debugging and incident response.
+# All output is written to $OUTPUT_DIR (default: .diagnostics).
+#
+# Required env vars (set in .taskfile.env):
+#   NAMESPACE     — Kubernetes namespace to collect diagnostics from
+#
+# Optional env vars:
+#   KUBE_CONTEXT  — kubectl context to use; falls back to active context if unset
+#   OUTPUT_DIR    — directory for output files (default: .diagnostics)
+
+vars:
+  CTX:
+    sh: echo "${KUBE_CONTEXT:+--context $KUBE_CONTEXT}"
+
+tasks:
+
+  # ── Kubernetes Diagnostics ───────────────────────────────────────────────────
+
+  kube:collect:
+    desc: "Collect full Kubernetes diagnostics for $NAMESPACE into $OUTPUT_DIR"
+    summary: |
+      Dumps pods, events, deployments, services, configmaps, and recent
+      logs from all pods in $NAMESPACE. Output goes to .diagnostics/kube/.
+    cmds:
+      - |
+        NS="${NAMESPACE:?NAMESPACE is not set}"
+        DIR="${OUTPUT_DIR:-.diagnostics}/kube/$NS"
+        mkdir -p "$DIR"
+        CTX="{{.CTX}}"
+        CONTEXT=$(kubectl $CTX config current-context 2>/dev/null || kubectl config current-context)
+        echo "Collecting diagnostics for namespace '$NS' (context: $CONTEXT)..."
+
+        # Metadata
+        echo "$CONTEXT" > "$DIR/context.txt"
+        date -u +"%Y-%m-%dT%H:%M:%SZ" > "$DIR/timestamp.txt"
+
+        # Resources
+        kubectl $CTX get all -n "$NS" -o wide                        > "$DIR/all-resources.txt"   2>&1
+        kubectl $CTX get pods -n "$NS" -o json                       > "$DIR/pods.json"           2>&1
+        kubectl $CTX get events -n "$NS" --sort-by='.lastTimestamp'  > "$DIR/events.txt"          2>&1
+        kubectl $CTX get deployments -n "$NS" -o yaml                > "$DIR/deployments.yaml"    2>&1
+        kubectl $CTX get services -n "$NS" -o yaml                   > "$DIR/services.yaml"       2>&1
+        kubectl $CTX get configmaps -n "$NS" -o yaml                 > "$DIR/configmaps.yaml"     2>&1
+        kubectl $CTX get hpa -n "$NS" -o yaml 2>/dev/null            > "$DIR/hpa.yaml"            || true
+        kubectl $CTX get pvc -n "$NS" -o yaml 2>/dev/null            > "$DIR/pvc.yaml"            || true
+
+        # Pod logs (last 500 lines per pod)
+        mkdir -p "$DIR/logs"
+        for POD in $(kubectl $CTX get pods -n "$NS" -o jsonpath='{.items[*].metadata.name}'); do
+          CONTAINERS=$(kubectl $CTX get pod "$POD" -n "$NS" -o jsonpath='{.spec.containers[*].name}')
+          for CONTAINER in $CONTAINERS; do
+            kubectl $CTX logs "$POD" -c "$CONTAINER" -n "$NS" --tail=500 \
+              > "$DIR/logs/${POD}__${CONTAINER}.log" 2>&1 || true
+            kubectl $CTX logs "$POD" -c "$CONTAINER" -n "$NS" --tail=200 --previous \
+              > "$DIR/logs/${POD}__${CONTAINER}.previous.log" 2>&1 || true
+          done
+        done
+
+        echo "Done. Output in $DIR"
+        echo "Files:"
+        ls -lh "$DIR"
+
+  kube:events:
+    desc: "Show recent Kubernetes events in $NAMESPACE (warnings only)"
+    cmds:
+      - |
+        kubectl {{.CTX}} get events -n "${NAMESPACE:?NAMESPACE is not set}" \
+          --sort-by='.lastTimestamp' \
+          --field-selector type=Warning
+
+  kube:failing-pods:
+    desc: "Show all pods not in Running/Completed state in $NAMESPACE"
+    cmds:
+      - |
+        echo "=== Pods not Running ==="
+        kubectl {{.CTX}} get pods -n "${NAMESPACE:?NAMESPACE is not set}" \
+          --field-selector 'status.phase!=Running,status.phase!=Succeeded' \
+          -o wide
+
+        echo ""
+        echo "=== CrashLoopBackOff / Error ==="
+        kubectl {{.CTX}} get pods -n "${NAMESPACE:?NAMESPACE is not set}" -o json \
+          | jq -r '
+            .items[] |
+            select(
+              .status.containerStatuses[]? |
+              .state.waiting.reason == "CrashLoopBackOff" or
+              .state.waiting.reason == "Error" or
+              .state.waiting.reason == "OOMKilled"
+            ) |
+            [.metadata.name,
+             (.status.containerStatuses[0].state.waiting.reason // "-"),
+             (.status.containerStatuses[0].restartCount | tostring)] |
+            @tsv' \
+          | column -t -s $'\t'
+
+  kube:describe-pod:
+    desc: "Describe a pod and show its last 100 log lines. Usage: task diagnostics:kube:describe-pod POD=my-pod"
+    vars:
+      POD: '{{.POD | default ""}}'
+    cmds:
+      - |
+        : "${POD:?Pass POD=<pod-name>}"
+        NS="${NAMESPACE:?NAMESPACE is not set}"
+        echo "=== kubectl describe ==="
+        kubectl {{.CTX}} describe pod "{{.POD}}" -n "$NS"
+        echo ""
+        echo "=== Recent logs ==="
+        kubectl {{.CTX}} logs "{{.POD}}" -n "$NS" --tail=100 --all-containers=true
+
+  # ── AWS Diagnostics ──────────────────────────────────────────────────────────
+
+  aws:collect:
+    desc: "Collect AWS account diagnostics (identity, quotas, recent CloudTrail events)"
+    cmds:
+      - |
+        DIR="${OUTPUT_DIR:-.diagnostics}/aws"
+        mkdir -p "$DIR"
+        echo "Collecting AWS diagnostics..."
+
+        # Identity
+        aws sts get-caller-identity                                > "$DIR/identity.json"          2>&1
+
+        # EC2 quotas and limits
+        aws service-quotas list-service-quotas --service-code ec2 \
+          --query 'Quotas[?UsageMetric!=null].[QuotaName,Value]' \
+          --output table                                          > "$DIR/ec2-quotas.txt"          2>&1 || true
+
+        # VPCs
+        aws ec2 describe-vpcs --output json                       > "$DIR/vpcs.json"              2>&1 || true
+
+        # Recent CloudTrail errors (last 24h)
+        aws cloudtrail lookup-events \
+          --lookup-attributes AttributeKey=ReadOnly,AttributeValue=false \
+          --start-time "$(date -u -v-1d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)" \
+          --output json                                           > "$DIR/cloudtrail-24h.json"     2>&1 || true
+
+        echo "Done. Output in $DIR"
+        ls -lh "$DIR"
+
+  # ── Terraform Diagnostics ────────────────────────────────────────────────────
+
+  terraform:state:
+    desc: "Show Terraform state summary (resource count by type)"
+    cmds:
+      - |
+        [ -d terraform ] || { echo "No terraform/ directory found."; exit 1; }
+        cd terraform
+        echo "=== Terraform state resource types ==="
+        terraform state list 2>/dev/null \
+          | sed 's/\[.*\]//' \
+          | sed 's/\..*//' \
+          | sort | uniq -c | sort -rn
+
+  # ── Combined ─────────────────────────────────────────────────────────────────
+
+  collect:all:
+    desc: "Collect all diagnostics (Kubernetes + AWS) into $OUTPUT_DIR"
+    cmds:
+      - task: kube:collect
+      - task: aws:collect
+      - |
+        echo ""
+        echo "All diagnostics collected in ${OUTPUT_DIR:-.diagnostics}/"
+        du -sh "${OUTPUT_DIR:-.diagnostics}/"
+
+  clean:
+    desc: "Delete all collected diagnostics in $OUTPUT_DIR"
+    prompt: "Delete all files in ${OUTPUT_DIR:-.diagnostics}/?"
+    cmds:
+      - rm -rf "${OUTPUT_DIR:-.diagnostics}"
+      - echo "Cleaned ${OUTPUT_DIR:-.diagnostics}/"
