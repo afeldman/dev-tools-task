@@ -1,6 +1,6 @@
 # dev-tools-task
 
-A modular [Task](https://taskfile.dev/) setup for common dev operations — AWS, Kubernetes, Helm, Terraform, Git, Security, and Diagnostics. Curl-installable into any project.
+A modular [Task](https://taskfile.dev/) setup for common dev operations — Azure, AWS, Kubernetes, Helm, Terraform, Git, Security, and Diagnostics. Curl-installable into any project.
 
 ## Installation
 
@@ -18,6 +18,7 @@ curl -sL https://raw.githubusercontent.com/afeldman/dev-tools-task/main/scripts/
     AWS_REGION=eu-central-1 \
     AWS_PROFILE_DEV=my-dev-profile \
     AWS_PROFILE_PLAY=my-play-profile \
+    AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
     KUBE_CONTEXT=my-cluster \
     sh
 ```
@@ -47,12 +48,14 @@ sh scripts/uninstall.sh
 ```sh
 task          # list all available tasks
 task setup    # AWS SSO login + Kubernetes login + terraform init
+task setup:azure  # Azure login + Kubernetes login + terraform init
 ```
 
 ## Modules
 
 | Module | Prefix | Key tasks |
-|---|---|---|
+| --- | --- | --- |
+| Azure | `azure:` | `azure:login`, `azure:account`, `azure:set-subscription`, `azure:aks:list` |
 | AWS | `aws:` | `aws:login:dev`, `aws:login:play`, `aws:whoami` |
 | Kubernetes | `kube:` | `kube:login`, `kube:pods`, `kube:logs`, `kube:exec` |
 | Helm | `helm:` | `helm:list`, `helm:diff`, `helm:upgrade`, `helm:rollback` |
@@ -72,18 +75,20 @@ cp .taskfile.env.example .taskfile.env
 ```
 
 | Variable | Description | Default |
-|---|---|---|
+| --- | --- | --- |
 | `NAMESPACE` | Kubernetes namespace / project name | `my-project` |
 | `AWS_REGION` | AWS region | `eu-central-1` |
 | `AWS_PROFILE_DEV` | AWS SSO profile for dev | — |
 | `AWS_PROFILE_PLAY` | AWS SSO profile for playground | — |
+| `AZURE_SUBSCRIPTION_ID` | Default Azure subscription for `azure:*` tasks | — |
 | `KUBE_CONTEXT` | kubectl context (empty = current) | — |
 | `OUTPUT_DIR` | Diagnostics output directory | `.diagnostics` |
 
 ## Prerequisites
 
 | Module | Required tools |
-|---|---|
+| --- | --- |
+| azure | `az` CLI |
 | aws | `aws` CLI |
 | kube | `kubectl`, `az` (AKS), `aws` (EKS) |
 | helm | `helm` ≥ 3, `helm-diff` plugin |

@@ -74,7 +74,7 @@ INTERACTIVE=true
 [ -t 0 ] || INTERACTIVE=true   # /dev/tty is always available on macOS/Linux
 
 # ── Collect configuration ─────────────────────────────────────────────────────
-printf "\n${GREEN}Lynqtech Dev Tools Installer${NC}\n\n"
+printf "\n${GREEN}Dev Tools Installer${NC}\n\n"
 
 # Project namespace
 if [ -z "$NAMESPACE" ]; then
@@ -157,6 +157,7 @@ NAMESPACE=${NAMESPACE}
 AWS_REGION=${AWS_REGION}
 AWS_PROFILE_DEV=${AWS_PROFILE_DEV}
 AWS_PROFILE_PLAY=${AWS_PROFILE_PLAY}
+AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
 KUBE_CONTEXT=${KUBE_CONTEXT}
 OUTPUT_DIR=${OUTPUT_DIR}
 EOF
@@ -187,6 +188,7 @@ printf "  NAMESPACE       = %s\n" "$NAMESPACE"
 printf "  AWS_REGION      = %s\n" "$AWS_REGION"
 printf "  AWS_PROFILE_DEV = %s\n" "$AWS_PROFILE_DEV"
 [ -n "$AWS_PROFILE_PLAY" ] && printf "  AWS_PROFILE_PLAY = %s\n" "$AWS_PROFILE_PLAY"
+[ -n "$AZURE_SUBSCRIPTION_ID" ] && printf "  AZURE_SUBSCRIPTION_ID = %s\n" "$AZURE_SUBSCRIPTION_ID"
 [ -n "$KUBE_CONTEXT" ]   && printf "  KUBE_CONTEXT     = %s\n" "$KUBE_CONTEXT"
 printf "  OUTPUT_DIR       = %s\n" "$OUTPUT_DIR"
 echo ""

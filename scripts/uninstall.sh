@@ -13,7 +13,7 @@ die()  { printf "${RED}ERR ${NC}%s\n" "$1" >&2; exit 1; }
 SKIP_CONFIRM=false
 [ "$1" = "--yes" ] && SKIP_CONFIRM=true
 
-printf "\n${RED}Lynqtech Dev Tools Uninstaller${NC}\n\n"
+printf "\n${RED}Dev Tools Uninstaller${NC}\n\n"
 warn "The following will be removed from the current directory:"
 echo ""
 

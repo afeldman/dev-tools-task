@@ -1,0 +1,40 @@
+version: '3'
+
+# Azure tasks
+#
+# Optional env vars (set in .taskfile.env):
+#   AZURE_SUBSCRIPTION_ID  — default Azure subscription for azure:* tasks
+
+tasks:
+
+  login:
+    desc: "Login to Azure CLI (az login)"
+    cmds:
+      - az login
+
+  account:
+    desc: "Show active Azure account"
+    cmds:
+      - az account show --output table
+
+  subscriptions:
+    desc: "List available Azure subscriptions"
+    cmds:
+      - az account list --output table
+
+  set-subscription:
+    desc: "Set active Azure subscription. Usage: task azure:set-subscription [SUBSCRIPTION_ID=<id>]"
+    vars:
+      SUBSCRIPTION_ID: '{{.SUBSCRIPTION_ID | default ""}}'
+    cmds:
+      - |
+        SUB="{{.SUBSCRIPTION_ID}}"
+        [ -n "$SUB" ] || SUB="${AZURE_SUBSCRIPTION_ID:-}"
+        : "${SUB:?Pass SUBSCRIPTION_ID=<subscription-id> or set AZURE_SUBSCRIPTION_ID in .taskfile.env}"
+        az account set --subscription "$SUB"
+        az account show --output table
+
+  aks:list:
+    desc: "List AKS clusters in current subscription"
+    cmds:
+      - az aks list --output table

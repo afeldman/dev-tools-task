@@ -6,7 +6,7 @@ version: '3'
 #   NAMESPACE     — default Kubernetes namespace to operate in
 #
 # Optional env vars:
-#   KUBE_CONTEXT  — kubectl context to use (e.g. lynqtech-dev); if unset,
+#   KUBE_CONTEXT  — kubectl context to use (e.g. dev); if unset,
 #                   the current active context is used
 #   KUBECONFIG    — path to kubeconfig (defaults to ~/.kube/config)
 #

@@ -16,7 +16,7 @@ die()  { printf "${RED}ERR ${NC}%s\n" "$1" >&2; exit 1; }
 # Must be run from a directory that already has tasks/ installed
 [ -d "./tasks" ] || die "No tasks/ directory found. Run scripts/install.sh first."
 
-printf "\n${GREEN}Lynqtech Dev Tools Updater${NC}\n\n"
+printf "\n${GREEN}Dev Tools Updater${NC}\n\n"
 info "Fetching latest tasks from ${REPO_URL} (branch: ${BRANCH})..."
 
 TMP=$(mktemp -d)

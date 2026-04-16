@@ -13,6 +13,11 @@ vars:
 
 includes:
 
+  azure:
+    taskfile: ./tasks/azure/Taskfile.yml
+    optional: true
+    dir: .
+
   aws:
     taskfile: ./tasks/aws/Taskfile.yml
     optional: true
@@ -59,5 +64,12 @@ tasks:
     desc: "Login to AWS (dev), Kubernetes, and initialize Terraform"
     cmds:
       - task: aws:login:dev
+      - task: kube:login
+      - task: terraform:init
+
+  setup:azure:
+    desc: "Login to Azure, Kubernetes, and initialize Terraform"
+    cmds:
+      - task: azure:login
       - task: kube:login
       - task: terraform:init

@@ -48,6 +48,7 @@ run_installer() {
     AWS_REGION="eu-west-1" \
     AWS_PROFILE_DEV="test-dev" \
     AWS_PROFILE_PLAY="test-play" \
+    AZURE_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000001" \
     KUBE_CONTEXT="test-cluster" \
     OUTPUT_DIR=".diagnostics" \
     sh "$PATCHED" >/dev/null 2>&1
@@ -66,7 +67,7 @@ else
 fi
 
 # 2. Expected task modules are present
-for module in aws kube helm terraform git security diagnostics; do
+for module in azure aws kube helm terraform git security diagnostics; do
   if [ -f "$TARGET/tasks/$module/Taskfile.yml" ]; then
     ok "tasks/$module/Taskfile.yml present"
   else
@@ -102,6 +103,7 @@ check_env "NAMESPACE"        "test-app"
 check_env "AWS_REGION"       "eu-west-1"
 check_env "AWS_PROFILE_DEV"  "test-dev"
 check_env "AWS_PROFILE_PLAY" "test-play"
+check_env "AZURE_SUBSCRIPTION_ID" "00000000-0000-0000-0000-000000000001"
 check_env "KUBE_CONTEXT"     "test-cluster"
 check_env "OUTPUT_DIR"       ".diagnostics"
 
